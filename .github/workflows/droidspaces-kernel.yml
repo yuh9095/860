@@ -1,0 +1,109 @@
+name: DroidSpaces OnePlus 12 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: Manifest file in yuh9095/kernel_manifest
+        required: true
+        default: oneplus_12_v.xml
+        type: string
+      build_target:
+        description: Official build target
+        required: true
+        default: pineapple gki
+        type: string
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: droidspaces-oneplus12-kernel
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          df -h
+
+      - name: Install repo tool and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3 python-is-python3 repo bc bison \
+            build-essential flex libssl-dev libelf-dev dwarves zip unzip rsync \
+            lz4 cpio device-tree-compiler
+
+      - name: Initialize our manifest fork
+        run: |
+          mkdir kernel-work
+          cd kernel-work
+          repo init -u https://github.com/yuh9095/kernel_manifest \
+            -b oneplus/sm8650 -m "${{ inputs.manifest || 'oneplus_12_v.xml' }}"
+
+      - name: Route the three kernel source projects to our forks
+        working-directory: kernel-work
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path(".repo/manifests/default.xml")
+          s = p.read_text()
+          s = s.replace('fetch="https://github.com/OnePlusOSS"', 'fetch="https://github.com/yuh9095"')
+          p.write_text(s)
+          PY
+          grep -nE 'remote fetch=|android_kernel_(common_)?oneplus_sm8650|android_kernel_modules_and_devicetree_oneplus_sm8650' .repo/manifests/default.xml
+
+      - name: Sync complete source tree
+        working-directory: kernel-work
+        run: repo sync -c -j4 --force-sync
+
+      - name: Apply required protected-export cleanup
+        working-directory: kernel-work
+        run: |
+          rm -f kernel_platform/common/android/abi_gki_protected_exports_*
+          rm -f kernel_platform/msm-kernel/android/abi_gki_protected_exports_*
+
+      - name: Build DroidSpaces GKI kernel
+        working-directory: kernel-work
+        env:
+          BUILD_TARGET: ${{ inputs.build_target || 'pineapple gki' }}
+        run: |
+          set -o pipefail
+          read -r -a target <<< "$BUILD_TARGET"
+          ./kernel_platform/oplus/build/oplus_build_kernel.sh "${target[@]}" 2>&1 | tee ../droidspaces-build.log
+
+      - name: Run ABI and module inventory checks
+        if: always()
+        working-directory: kernel-work
+        run: |
+          mkdir -p ../artifacts/droidspaces
+          find kernel_platform -type f -name '*.ko' -print 2>/dev/null | sort > ../artifacts/droidspaces/modules.txt || true
+          find kernel_platform -type f -name '.config' -print 2>/dev/null > ../artifacts/droidspaces/config-paths.txt || true
+          find kernel_platform -type f \( -name 'abi_*' -o -name '*abi*.xml' -o -name '*abi*.dump' \) -print 2>/dev/null | sort > ../artifacts/droidspaces/abi-files.txt || true
+          grep -R -h '^CONFIG_CFS_BANDWIDTH=\|^# CONFIG_CFS_BANDWIDTH' kernel_platform --include='.config' 2>/dev/null | sort -u > ../artifacts/droidspaces/cfs-bandwidth-config.txt || true
+          grep -R -h '^CONFIG_CGROUP_PIDS=\|^# CONFIG_CGROUP_PIDS' kernel_platform --include='.config' 2>/dev/null | sort -u > ../artifacts/droidspaces/cgroup-pids-config.txt || true
+
+      - name: Collect build outputs and logs
+        if: always()
+        run: |
+          mkdir -p artifacts/droidspaces
+          cp droidspaces-build.log artifacts/droidspaces/ 2>/dev/null || true
+          if [ -d kernel-work ]; then
+            find kernel-work -type f \( -name Image -o -name Image.gz -o -name '*.ko' -o -name '*.dtb' -o -name '*.dtbo' -o -name '.config' \) \
+              -exec cp --parents {} artifacts/droidspaces/ \; 2>/dev/null || true
+          fi
+          df -h
+
+      - name: Upload DroidSpaces build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-oneplus12-kernel
+          path: artifacts/droidspaces/
+          if-no-files-found: warn
+          retention-days: 14
