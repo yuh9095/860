@@ -65,8 +65,7 @@ jobs:
       - name: Apply required protected-export cleanup
         working-directory: kernel-work
         run: |
-          rm -f kernel_platform/common/android/abi_gki_protected_exports_*
-          rm -f kernel_platform/msm-kernel/android/abi_gki_protected_exports_*
+          find . -type f -name 'abi_gki_protected_exports_*' -print -delete
 
       - name: Build DroidSpaces GKI kernel
         working-directory: kernel-work
