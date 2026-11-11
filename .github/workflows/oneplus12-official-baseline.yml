@@ -37,6 +37,11 @@ jobs:
         working-directory: kernel-work
         run: repo sync -c -j4 --force-sync
 
+      - name: Remove GKI protected export lists
+        working-directory: kernel-work
+        run: |
+          find . -type f -name 'abi_gki_protected_exports_*' -print -delete
+
       - name: Build official GKI baseline
         working-directory: kernel-work
         run: |
