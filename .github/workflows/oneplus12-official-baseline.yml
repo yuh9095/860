@@ -1,0 +1,65 @@
+name: OnePlus 12 Official GKI Baseline
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oneplus12-official-baseline
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          df -h
+
+      - name: Install repo tool and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3 python-is-python3 repo bc bison             build-essential flex libssl-dev libelf-dev dwarves zip unzip rsync             lz4 cpio device-tree-compiler
+
+      - name: Initialize official OnePlus 12 V manifest
+        run: |
+          mkdir kernel-work
+          cd kernel-work
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest \
+            -b oneplus/sm8650 -m oneplus_12_v.xml
+
+      - name: Sync complete source tree
+        working-directory: kernel-work
+        run: repo sync -c -j4 --force-sync
+
+      - name: Build official GKI baseline
+        working-directory: kernel-work
+        run: |
+          set -o pipefail
+          ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki 2>&1 | tee ../official-build.log
+
+      - name: Collect baseline outputs
+        if: always()
+        run: |
+          mkdir -p artifacts/official
+          cp official-build.log artifacts/official/ 2>/dev/null || true
+          if [ -d kernel-work ]; then
+            find kernel-work -type f \( -name Image -o -name Image.gz -o -name '*.ko' -o -name '*.dtb' -o -name '*.dtbo' -o -name '.config' \) \
+              -exec cp --parents {} artifacts/official/ \; 2>/dev/null || true
+            find kernel-work -type f -name '.config' -print > artifacts/official/config-paths.txt
+          fi
+          df -h
+
+      - name: Upload official baseline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oneplus12-official-gki-baseline
+          path: artifacts/official/
+          if-no-files-found: warn
+          retention-days: 14
