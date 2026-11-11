@@ -51,12 +51,26 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path(".repo/manifests/default.xml")
+          p = Path(".repo/manifest.xml")
+          if not p.is_file():
+              raise SystemExit(f"Selected repo manifest is missing: {p}")
           s = p.read_text()
-          s = s.replace('fetch="https://github.com/OnePlusOSS"', 'fetch="https://github.com/yuh9095"')
+          old_remote = 'fetch="https://github.com/OnePlusOSS"'
+          if old_remote not in s:
+              raise SystemExit("Expected OnePlusOSS remote was not found in selected manifest")
+          s = s.replace(old_remote, 'fetch="https://github.com/yuh9095"')
+          required = (
+              "android_kernel_common_oneplus_sm8650",
+              "android_kernel_oneplus_sm8650",
+              "android_kernel_modules_and_devicetree_oneplus_sm8650",
+          )
+          missing = [name for name in required if f'name="{name}"' not in s]
+          if missing:
+              raise SystemExit(f"Expected fork projects missing from manifest: {missing}")
           p.write_text(s)
+          print(f"Updated selected manifest: {p.resolve()}")
           PY
-          grep -nE 'remote fetch=|android_kernel_(common_)?oneplus_sm8650|android_kernel_modules_and_devicetree_oneplus_sm8650' .repo/manifests/default.xml
+          grep -nE 'remote fetch=|android_kernel_(common_)?oneplus_sm8650|android_kernel_modules_and_devicetree_oneplus_sm8650' .repo/manifest.xml
 
       - name: Sync complete source tree
         working-directory: kernel-work
